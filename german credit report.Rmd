@@ -1,0 +1,258 @@
+---
+title: "german credit data"
+author: "Anjali Gunjegai"
+date: "7 February 2019"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+The German credit dataset consists of information about 1000 customers who have been classified based on their propensity to default on their loans. We are trying to model this prediction using logistic regression in this problem. We load the data at look at the summary table for this
+
+```{r,echo=FALSE}
+# import the data
+# Reading in the data
+german_credit = read.table("http://archive.ics.uci.edu/ml/machine-learning-databases/statlog/german/german.data")
+
+colnames(german_credit)=c("chk_acct","duration","credit_his","purpose","amount","saving_acct","present_emp","installment_rate","sex","other_debtor","present_resid","property","age","other_install","housing","n_credits","job","n_people","telephone","foreign","response")
+
+#orginal response coding 1= good, 2 = bad
+#we need 0 = good, 1 = bad
+german_credit$response = german_credit$response - 1
+german_credit$response = as.factor(german_credit$response)
+#str(german_credit)
+summary(german_credit)
+```
+
+The data contains 21 attributes including the response variable and there are no null values in the dataset. Let us look at the individual distributions:
+
+```{r,echo=FALSE}
+library(ggplot2)
+
+ggplot(data= german_credit,mapping = aes(x= response,..count..))+
+  geom_histogram(binwidth= 0.6,position = "dodge",stat = "count")+
+  labs(title = "Distribution of the defaulters", x= "response")
+  
+# chk_acct
+#ggplot(data= german_credit,mapping = aes(x= chk_acct, ..count..))+
+#  geom_bar(aes(fill = response),position = "dodge")
+
+# duration
+#ggplot(german_credit, aes(x=duration, fill=response)) +
+#  geom_density(alpha = 0.5)
+# credit history
+#ggplot(data= german_credit,mapping = aes(x= credit_his, ..count..))+
+#  geom_bar(aes(fill = response),position = "dodge")
+
+# credit_amount
+ggplot(german_credit, aes(x=amount, fill=response)) +
+  geom_density(alpha = 0.5) +
+  labs(title = "credit amount of defaulters vs non defaulters")
+
+# saving account
+
+ggplot(german_credit, aes(x=saving_acct, fill=response)) +
+  geom_bar()+
+  labs(title = "savings account amount for defaulters vs. non defaulters")
+
+# years of employment
+ggplot(german_credit, aes(x=present_emp, fill=response)) +
+  geom_bar()+
+  labs(title = "years of employment for defaulters vs. non defaulters")
+
+# housing
+# years of employment
+ggplot(german_credit, aes(x=housing, fill=response)) +
+  geom_bar()+
+  labs(title = "housing situation for defaulters vs. non defaulters")
+
+# job
+ggplot(german_credit, aes(x=job, fill=response)) +
+  geom_bar()+
+  labs(title = "job type for defaulters vs. non defaulters")
+```
+The data has 700 non-defaulters and 300 defaulters. Some observations from the data: 
+1. The defaulters seem to borrow a slightly higher amount than non-defaulters
+2. Defaulters seem to have a savings account with a low balance 
+3. Most defaulters have been employeed for 1 to 7 years
+4. Most defaulters, own their houses
+5. Deaulters generally are unskilled residents or skilled employees
+
+Let us split the data into training and testing sets and fit a logistic model on it:
+
+```{r,echo=FALSE}
+# creating the training and testing data
+index <- sample(nrow(german_credit),nrow(german_credit)*0.75)
+credit.train = german_credit[index,]
+credit.test = german_credit[-index,]
+
+credit.glm0<- glm(response~., family=binomial, data=credit.train)
+summary(credit.glm0)
+```
+The summary shows that the model Residual deviance value is 659.42 and the AIC value is 757.42.
+We can compare different models against this full model and select the variables that can be included in the analysis. 
+```{r,echo=FALSE}
+pred.glm0.train<- predict(credit.glm0, type="response")
+
+library(ROCR)
+pred <- prediction(pred.glm0.train, credit.train$response)
+perf <- performance(pred, "tpr", "fpr")
+plot(perf, colorize=TRUE)
+
+#Get the AUC
+unlist(slot(performance(pred, "auc"), "y.values"))
+```
+The ROC curve of the full model shows a rapid increase, which indicates a high predictive power of the model. The AUC value of the full model is 0.8365796. Since this is an imbalanced dataset, let us look at the Precision - Recall curve, as it gives us a better idea about the classification
+
+```{r,echo=FALSE}
+#install.packages("PRROC")
+library(PRROC)
+score1= pred.glm0.train[credit.train$response==1]
+score0= pred.glm0.train[credit.train$response==0]
+roc= roc.curve(score1, score0, curve = T)
+roc$auc
+
+pr= pr.curve(score1, score0, curve = T)
+pr
+plot(pr)
+```
+
+The above graph shows a predictive ability of the full model is only slightly better at identifying the defaulters than null models. The AUC has reduced to 0.68.
+
+Let us take a look at the confusion matrix and the symmetric MR of the full model using the Naive cutoff
+```{r,echo=FALSE}
+pcut1<- mean(as.numeric(as.character(credit.train$response)))
+# get binary prediction
+class.glm0.train<- (pred.glm0.train>pcut1)*1
+# get confusion matrix
+table(credit.train$response, class.glm0.train, dnn = c("True", "Predicted"))
+# (equal-weighted) misclassification rate
+MR<- mean(credit.train$response!=class.glm0.train)
+```
+The model has a high false positive value and a misclassification rate of 0.248, we can reduce it by either finding a better model using techniques such as step and then applying different weights to the misclassifications
+
+```{r,echo=FALSE}
+
+
+credit.glm.back <- step(credit.glm0) # backward selection (if you don't specify anything)
+summary(credit.glm.back)
+credit.glm.back$deviance
+AIC(credit.glm.back)
+BIC(credit.glm.back)
+
+
+```
+The AIC value of the step model is lower than that of full model, therefore, we select the step model as our final model
+
+
+Testing this model for in sample misclassification rate:
+```{r,echo=FALSE}
+# in-sample prediction
+
+pred.step.train <- predict(credit.glm.back,newdata = credit.train,type = "response")
+
+# getting the ROC curve
+library(ROCR)
+pred <- prediction(pred.step.train, credit.train$response)
+perf <- performance(pred, "tpr", "fpr")
+plot(perf, colorize=TRUE)
+
+#Get the AUC
+unlist(slot(performance(pred, "auc"), "y.values"))
+
+#getting the MR rate
+pcut1<- mean(as.numeric(as.character(credit.train$response)))
+# get binary prediction
+
+class.step.train <- (pred.step.train>pcut1)*1
+# get confusion matrix
+
+table(credit.train$response, class.step.train, dnn = c("True", "Predicted"))
+
+# (equal-weighted) misclassification rate
+
+MR_step<- mean(credit.train$response!=class.step.train)
+```
+The step model does  seem to perform any better than the full model, it infact gives a lower MR of 0.25. We will therefore stick to the step model for our logistic regression problem. 
+
+We can approach this problem by focusing on Precision/ Recall values instead of accuracy. We do this by assigning different weights to false positive and false negative classifications and thus calculating an assymetric cost. For our case, the weights we assign are:
+  weight for misclassifying a 1: 5
+  weight for misclassifying a 0: 1
+This is equivalent to a cut off of 1/6
+
+We now compare the train and test misclassification rates and model accuracies:
+
+```{r,echo=FALSE}
+pcut_n <- 1/6
+
+# step 1. get binary classification
+class.step.train.opt<- (pred.step.train > pcut_n)*1
+# step 2. get confusion matrix, MR, FPR, FNR
+table(credit.train$response, class.step.train.opt, dnn = c("True", "Predicted"))
+
+MR_assym_step<- mean(credit.train$response!= class.step.train.opt)
+FPR_step_assym<- sum(credit.train$response==0 & class.step.train.opt==1)/sum(credit.train$response==0)
+FNR_step_assym<- sum(credit.train$response==1 & class.step.train.opt==0)/sum(credit.train$response==1)
+
+# define a cost function with input "obs" being observed response 
+# and "pi" being predicted probability, and "pcut" being the threshold.
+costfunc = function(obs, pred.p, pcut){
+    weight1 = 5   # define the weight for "true=1 but pred=0" (FN)
+    weight0 = 1    # define the weight for "true=0 but pred=1" (FP)
+    c1 = (obs==1)&(pred.p<pcut)    # count for "true=1 but pred=0"   (FN)
+    c0 = (obs==0)&(pred.p>=pcut)   # count for "true=0 but pred=1"   (FP)
+    cost = mean(weight1*c1 + weight0*c0)  # misclassification with weight
+    return(cost) # you have to return to a value when you write R functions
+} # end of the function
+
+cost<- costfunc(obs = credit.train$response, pred.p = pred.step.train, pcut = pcut_n)  
+
+
+
+#Symmetric cost
+cost1 <- function(r, pi, pcut){
+  mean(((r==0)&(pi>pcut)) | ((r==1)&(pi<pcut)))
+}
+cost_symm <- cost1(r= credit.train$response,pi= pred.step.train,pcut = pcut1)
+FPR_symm<- sum(credit.train$response==0 & class.step.train==1)/sum(credit.train$response==0)
+FNR_symm<- sum(credit.train$response==1 & class.step.train==0)/sum(credit.train$response==1)
+
+
+```
+As we can see from the above values, the FNR has gone down to 0.132 as a result of using the weighted cutoff values. This means that our model now has reduced misclassification of defaulters as non-defaulters
+
+We can now use the model for the test set data:
+```{r,echo=FALSE}
+
+#### Out of sample validation
+pred.step.test<- predict(credit.glm.back, newdata = credit.test, type="response")
+
+### Using the new cut off value to calculate 1 & 0
+
+# step 1. get binary classification
+class.step.test.opt<- (pred.step.test>pcut_n)*1
+# step 2. get confusion matrix, MR, FPR, FNR
+table(credit.test$response, class.step.test.opt, dnn = c("True", "Predicted"))
+
+MR_test<- mean(credit.test$response!= class.step.test.opt)
+FPR_test<- sum(credit.test$response==0 & class.step.test.opt==1)/sum(credit.test$response==0)
+FNR_test<- sum(credit.test$response==1 & class.step.test.opt==0)/sum(credit.test$response==1)
+
+# getting the auc value
+
+pred <- prediction(pred.step.test, credit.test$response)
+perf <- performance(pred, "tpr", "fpr")
+
+
+#Get the AUC
+unlist(slot(performance(pred, "auc"), "y.values"))
+
+# step 1. get binary classification
+class.step.test.opt.symm<- (pred.step.test > pcut1)*1
+
+MR_sym_step<- mean(credit.test$response!= class.step.test.opt.symm)
+
+```
+The model performs well on the test data with a reduced FNR value
